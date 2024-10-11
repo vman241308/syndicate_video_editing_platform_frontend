@@ -1,0 +1,235 @@
+import React, { Component } from 'react';
+import TransThumbnail from '../assets/empty-thumbnail.png';
+
+export default class ThumbnailExtractor extends Component {
+  constructor(props) {
+    super(props);
+    this.video;
+    this.videoHtml;
+    this.videoHeight;
+    this.videoWidth;
+    this.videoDuration;
+    this.videoInterval;
+    this.videoStart;
+    this.completed = 0;
+    this.captures = [];
+    this.capturesDetailed = {};
+    this.events = {};
+    this.currentShot = 0;
+    this.startTime = null;
+    this.lastTime = null;
+    this.minWidth = props.minWidth || 1280;
+    this.minHeight = props.minHeight || 1280;
+    this.count = props.count || 8;
+    this.state = {
+      captures: [],
+    };
+  }
+
+  getTime = () => {
+    const thisTime = new Date().getTime();
+    const diff = thisTime - this.lastTime;
+    const fromStart = thisTime - this.startTime;
+    this.lastTime = thisTime;
+    return {
+      diff,
+      fromStart,
+    };
+  };
+
+  cleanUp = () => {
+    this.video = null;
+    delete this.video;
+    this.videoHtml = null;
+    delete this.videoHtml;
+  };
+
+  grabComplete = (image) => {
+    const { onCapture, onComplete, onCompleteDetails } = this.props;
+    const counter = this.currentShot;
+    this.completed++;
+
+    //Stats are nice
+    const statTime = this.getTime();
+
+    //Save it to the array
+    this.captures.push(image);
+    this.setState({ captures: this.captures });
+    this.capturesDetailed[counter].url = image;
+    this.capturesDetailed[counter].captureTime = statTime.diff;
+
+    //Fire the event incase anyone is listening
+    onCapture && onCapture(this.captures);
+
+    //All done so remove the elements
+    if (this.completed >= this.count) {
+      this.cleanUp();
+      onComplete && onComplete(this.captures);
+      const stats = this.getTime();
+      onCompleteDetails &&
+        onCompleteDetails({
+          thumbs: this.capturesDetailed,
+          totalTime: stats.fromStart,
+          details: {
+            thumbnailCount: this.count,
+            videoDuration: this.videoDuration,
+            videoInterval: this.videoInterval,
+            thumbWidth: this.thumbWidth,
+            thumbHeight: this.thumbHeight,
+            videoStart: this.videoStart,
+          },
+        });
+    } else {
+      //Prepare the next shot
+      this.prepareScreenshot();
+    }
+  };
+
+  save = (canvas) => {
+    //Get the shot
+    const theCapture = canvas.toDataURL('image/jpeg', 0.7);
+    //done
+    this.grabComplete(theCapture);
+  };
+
+  /**
+   * Capture the shot by using a canvas element
+   */
+  captureScreenShot = () => {
+    const canvas = document.createElement('canvas');
+    if (this.thumbWidth > this.thumbHeight) {
+      canvas.width = this.thumbHeight;
+      canvas.height = this.thumbHeight;
+    } else {
+      canvas.width = this.thumbWidth;
+      canvas.height = this.thumbWidth;
+    }
+
+    const ctx = canvas.getContext('2d');
+    const squareW = Math.min(this.video.videoWidth, this.video.videoHeight);
+    ctx.drawImage(
+      this.video,
+      (this.video.videoWidth - squareW) / 2,
+      (this.video.videoHeight - squareW) / 2,
+      squareW,
+      squareW,
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    );
+    //and save
+    this.save(canvas);
+  };
+
+  prepareScreenshot = () => {
+    this.currentShot++;
+    var newTime = Math.floor(
+      this.videoStart +
+        this.currentShot * this.videoInterval -
+        this.videoInterval
+    );
+    console.log(newTime);
+    var statTime = this.getTime();
+    this.capturesDetailed[this.currentShot] = {
+      capture: this.currentShot,
+      width: this.thumbWidth,
+      height: this.thumbHeight,
+      timeindex: newTime,
+      startTime: statTime.fromStart,
+      captureTime: null,
+    };
+    this.video.currentTime = newTime;
+  };
+
+  initScreenshot = () => {
+    this.thumbWidth = this.video.videoWidth;
+    this.thumbHeight = this.video.videoHeight;
+    //Wide video
+    if (this.thumbWidth > this.thumbHeight) {
+      const ratio = this.minWidth / this.thumbWidth;
+      this.thumbHeight = this.minHeight;
+      this.thumbWidth = parseInt(this.thumbWidth * ratio);
+
+      //square video
+    } else if (this.thumbWidth === this.thumbHeight) {
+      this.thumbWidth = this.minWidth;
+      this.thumbHeight = this.minHeight;
+
+      //tall video
+    } else {
+      const ratio = this.minHeight / this.thumbHeight;
+      this.thumbWidth = this.minWidth;
+      this.thumbHeight = parseInt(this.thumbHeight * ratio);
+    }
+
+    this.videoHtml.style.width = this.thumbWidth;
+    this.videoHtml.style.height = this.thumbHeight;
+
+    this.videoDuration = this.video.duration;
+    this.videoInterval = this.videoDuration / this.count; //this will ensure credits are ignored
+    this.videoStart = this.videoInterval / 2;
+    //Prepare the next shot
+    this.prepareScreenshot();
+  };
+
+  parseVideo = () => {
+    const {
+      fileURL,
+      fileType,
+      onBeforeCapture,
+      onStartCapture,
+      onUnsupportedVideo,
+    } = this.props;
+    onBeforeCapture && onBeforeCapture();
+    this.lastTime = this.startTime = new Date().getTime();
+    const videoHtml = document.createElement('video');
+    videoHtml.setAttribute('id', 'videoHtmlCapture');
+    videoHtml.setAttribute('controls', true);
+    videoHtml.setAttribute('preload', 'metadata');
+    videoHtml.setAttribute('crossorigin', '*');
+    videoHtml.setAttribute('width', '600');
+    videoHtml.setAttribute('src', fileURL);
+
+    const theVideo = document.createElement('source');
+    theVideo.setAttribute('src', fileURL);
+    theVideo.setAttribute('type', fileType);
+    videoHtml.innerHTML = theVideo;
+    this.videoHtml = videoHtml;
+    this.video = this.videoHtml;
+    this.video.onloadedmetadata = () => {
+      onStartCapture && onStartCapture(this.state.captures);
+      this.video.play();
+    };
+    this.video.onplay = () => {
+      this.initScreenshot();
+    };
+    //Can't play this video
+    this.video.onerror = () => {
+      onUnsupportedVideo && onUnsupportedVideo();
+    };
+    this.video.addEventListener('seeked', () => {
+      //Check we still have a video (might have been cancelled)
+      if (this.video) {
+        this.video.pause();
+        this.captureScreenShot();
+      }
+    });
+  };
+
+  componentDidMount() {
+    if (this.props.fileURL) {
+      this.parseVideo();
+    }
+  }
+
+  componentDidUpdate(prevProps, prevState) {
+    if (prevProps.fileURL !== this.props.fileURL) {
+      this.parseVideo();
+    }
+  }
+
+  render() {
+    return null;
+  }
+}
